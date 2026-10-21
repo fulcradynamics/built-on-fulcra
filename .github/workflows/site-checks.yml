@@ -1,0 +1,49 @@
+name: site-checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  site-checks:
+    name: site-checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Tool tests
+        run: node --test "tools/**/*.test.mjs"
+      - name: Find sites to check
+        id: sites
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base="${{ github.event.pull_request.base.sha }}"
+            changed="$(git diff --name-only "$base" HEAD -- sites/ | cut -d/ -f2 | sort -u)"
+          else
+            changed="$(ls -1 sites 2>/dev/null || true)"
+          fi
+          list=""
+          for id in $changed; do
+            if [ -d "sites/$id" ]; then list="$list $id"; fi
+          done
+          echo "ids=$(echo $list)" >> "$GITHUB_OUTPUT"
+          echo "Sites to check: ${list:-none}"
+      - name: Check each site
+        run: |
+          set -e
+          for id in ${{ steps.sites.outputs.ids }}; do
+            echo "::group::$id"
+            node tools/check-site.mjs "sites/$id"
+            (cd "sites/$id" && npm ci && npm run check)
+            bash tools/e2e-site.sh "sites/$id"
+            echo "::endgroup::"
+          done
